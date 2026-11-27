@@ -1,0 +1,72 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>dbwong</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f4f6;color:#242429;font:15px system-ui,sans-serif}header{background:#252528;color:white;padding:16px 5vw;display:flex;align-items:center;gap:24px}header strong{font-size:22px}a{color:inherit}main{max-width:1050px;margin:36px auto;padding:0 20px}section,form{padding:20px;background:white;border:1px solid #dedee4;border-radius:8px;margin:14px 0}label{display:inline-grid;gap:5px;margin:6px}input,select,button{font:inherit;padding:8px;border:1px solid #aaa;border-radius:4px}button{cursor:pointer;background:#a61720;color:white}h1,h2{margin:4px 0 16px}p{min-height:1.4em}li{padding:5px}label input{max-width:100%}
+</style>
+<header><strong>dbwong</strong><a href="/">工作台</a><a href="/admin">管理后台</a><button id="logout" hidden>退出</button></header>
+<main><h1 id="heading"></h1><p id="message" role="status"></p>
+<form id="login" hidden><label>账号<input name="name" required autocomplete="username"></label><label>密码<input name="password" type="password" required autocomplete="current-password"></label><button>登录</button></form>
+<div id="content" hidden><section><h2>数据库连接</h2><ul id="connections"></ul></section>
+<div id="controls" hidden><form id="account"><h2>创建 DBA 账号</h2><label>账号<input name="name" required></label><label>密码（12–72 字节）<input name="password" type="password" required autocomplete="new-password"></label><button>创建</button></form>
+<form id="account_status"><h2>账号状态</h2><label>DBA 账号<select name="account" required></select></label><label>操作<select name="enabled"><option value="no">停用并结束会话</option><option value="yes">恢复登录</option></select></label><button>应用</button></form>
+<form id="reset_password"><h2>重置 DBA 密码</h2><label>DBA 账号<select name="account" required></select></label><label>新密码（12–72 字节）<input name="password" type="password" autocomplete="new-password" required></label><button>重置并结束会话</button></form>
+<form id="connection"><h2>登记连接</h2><label>名称<input name="name" required></label><label>引擎<select name="engine"><option>mysql</option><option>postgres</option><option>mssql</option><option>mongo</option><option>redis</option></select></label><label>环境<select name="environment"><option value="test">测试</option><option value="production">生产</option></select></label><label>连接串<input name="dsn" type="password" required autocomplete="off"></label><button>保存</button></form>
+<form id="edit_connection"><h2>维护已登记连接</h2><label>连接<select name="target" required></select></label><label>名称<input name="name" required></label><label>环境<select name="environment"><option value="test">测试</option><option value="production">生产</option></select></label><label>状态<select name="enabled"><option value="yes">启用</option><option value="no">停用</option></select></label><label>新连接串（留空沿用）<input name="dsn" type="password" autocomplete="off"></label><button>保存修改</button><button type="button" id="probe">测试已保存的 PostgreSQL 连接</button></form>
+<form id="session_hours"><h2>会话设置</h2><label>新登录会话有效期（小时）<input name="hours" type="number" min="1" max="168" required></label><button>保存</button></form><form id="grant"><h2>读取授权</h2><label>账号<select name="account" required></select></label><label>连接<select name="connection" required></select></label><label>操作<select name="allow"><option value="yes">授予读取</option><option value="no">撤销读取</option></select></label><button>应用</button><ul id="grants"></ul></form></div></div></main>
+<script type="module">
+const el=id=>document.getElementById(id);
+const admin=location.pathname.startsWith('/admin');
+el('heading').textContent=admin?'管理后台':'我的工作台';
+async function api(path,body){
+ const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+ const response=await fetch(path,{...options,cache:'no-store'});
+ if(!response.ok)throw Object.assign(new Error(({400:'请检查表单内容',401:'请使用有效账号和密码登录',403:'当前账号没有此权限',409:'名称已存在'})[response.status]||'服务暂不可用'),{status:response.status});
+ return response.headers.get('content-type')?.includes('application/json')?response.json():null;
+}
+function list(id,values){el(id).replaceChildren(...values.map(text=>{const li=document.createElement('li');li.textContent=text;return li}))}
+function options(name,rows){el('grant').elements[name].replaceChildren(...rows.map(r=>new Option(r.name,r.id)))}
+async function refresh(){
+ el('content').hidden=true;
+ try{
+ const data=await api(admin?'/api/admin':'/api/connections');
+ const rows=admin?data.connections:data;
+ list('connections',rows.length?rows.map(r=>r.name+' · '+r.engine+' · '+(r.environment==='production'?'生产':'测试')):['暂无连接']);
+ if(admin){el('session_hours').elements.hours.value=data.session_hours;options('account',data.accounts);options('connection',rows);
+ for(const id of ['reset_password','account_status']) {
+   const choices=data.accounts.filter(a=>!a.admin).map(a=>new Option(a.name+(a.enabled?'':'（已停用）'),a.id));
+   el(id).elements.account.replaceChildren(...choices)
+ }
+ const edit=el('edit_connection').elements;
+ edit.target.replaceChildren(...rows.map(r=>new Option(r.name+(r.enabled?'':'（已停用）'),r.id)));
+ function selectConnection(){
+   const row=rows.find(r=>r.id===Number(edit.target.value));
+   edit.name.value=row?.name??'';edit.dsn.value='';edit.environment.value=row?.environment??'test';
+   edit.enabled.value=row?.enabled?'yes':'no';
+   el('probe').disabled=!row?.enabled||row.engine!=='postgres';
+ }
+ edit.target.onchange=selectConnection;selectConnection();
+ const names=new Map(data.accounts.map(r=>[r.id,r.name])), labels=new Map(rows.map(r=>[r.id,r.name]));
+ list('grants',data.grants.map(([a,c])=>names.get(a)+' → '+labels.get(c)))}
+ el('login').hidden=true;el('content').hidden=false;el('controls').hidden=!admin;el('logout').hidden=false;
+ }catch(e){el('login').hidden=false;el('logout').hidden=e.status===401;el('message').textContent=e.message}
+}
+for(const form of document.forms)form.onsubmit=async event=>{
+ event.preventDefault();const data=Object.fromEntries(new FormData(form));const signin=form.getAttribute('id')==='login';
+ if(form.getAttribute('id')==='account_status'||form.getAttribute('id')==='reset_password')data.account=Number(data.account);
+ if(form.getAttribute('id')==='account_status')data.enabled=data.enabled==='yes';
+ if(form.getAttribute('id')==='edit_connection'){data.id=Number(data.target);delete data.target;data.enabled=data.enabled==='yes'}
+ if(form.getAttribute('id')==='session_hours') data.hours=Number(data.hours);
+ if(form.getAttribute('id')==='grant'){data.account=Number(data.account);data.connection=Number(data.connection);data.allow=data.allow==='yes'}
+ try{await api(signin?'/api/login':'/api/admin',signin?data:{action:form.getAttribute('id'),...data});form.reset();el('message').textContent=signin?'':'已保存';await refresh()}catch(e){el('message').textContent=e.message}
+};
+el('probe').onclick=async()=>{
+ const connection=Number(el('edit_connection').elements.target.value);
+ try{const result=await api('/api/admin/probe',{connection});
+ el('message').textContent=({'probe.ok':'已连接，查询成功','probe.failed':'连接或认证失败','probe.timeout':'连接测试超时'})[result.outcome]}
+ catch(e){el('message').textContent=e.message}
+};
+el('logout').onclick=async()=>{try{await api('/api/logout',{});location.reload()}catch(e){el('message').textContent=e.message}};
+refresh();
+</script></html>
+
+
+

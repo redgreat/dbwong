@@ -1,0 +1,6 @@
+{
+  "database_url": "postgresql://user_dbwong:REPLACE_PASSWORD@db.wongcw.cn:8432/dbwong",
+  "origin": "http://localhost:8080",
+  "secret": "REPLACE_WITH_A_RANDOM_32_BYTE_OR_LONGER_KEY",
+  "initial_admin_password": "REPLACE_BEFORE_FIRST_START"
+}
