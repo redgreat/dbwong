@@ -107,3 +107,16 @@ assert all(event["id"] < first_page["next_before"] for event in second_page["eve
 assert any(event["action"] == "account.reset_password" for event in second_page["events"])
 assert password not in json.dumps(second_page)
 print("PASS: audit authorization, pagination, and credential exclusion")
+
+call(dba, "/api/admin", {"action": "delete_connection", "id": connection_id}, 403)
+call(admin, "/api/admin", {**grant, "allow": True}, 204)
+call(admin, "/api/admin", {"action": "delete_connection", "id": connection_id}, 204)
+assert call(dba, "/api/connections") == []
+assert all(row["id"] != connection_id for row in call(admin, "/api/admin")["connections"])
+call(admin, "/api/admin/probe", {"connection": connection_id}, 404)
+call(admin, "/api/admin", edit, 404)
+call(admin, "/api/admin", {"action": "connection", "name": edit["name"], "dsn": password,
+                           "environment": "test", "engine": "postgres"}, 204)
+assert call(dba, "/api/connections") == []
+assert any(event["action"] == "connection.delete" for event in call(admin, "/api/admin/audit")["events"])
+print("PASS: connection deletion, grant removal, name reuse and audit")

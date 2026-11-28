@@ -24,7 +24,7 @@ pub async fn probe(
     let id = input.connection;
     let row = db
         .query_opt(
-            "SELECT engine,enabled,pgp_sym_decrypt(encrypted_dsn,$2) FROM connections WHERE id=$1",
+            "SELECT engine,enabled,pgp_sym_decrypt(encrypted_dsn,$2) FROM connections WHERE id=$1 AND deleted_at IS NULL",
             &[&id, app.key.as_ref()],
         )
         .await?

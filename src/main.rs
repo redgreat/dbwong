@@ -116,7 +116,7 @@ async fn logout(State(a): State<App>, h: HeaderMap) -> Result<Response> {
 async fn catalog(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
     let db = a.db().await?;
     let id = identity(&db, &h, false).await?;
-    let rows=db.query("SELECT c.id,c.name,c.engine,c.environment FROM connections c JOIN connection_read_grants g ON c.id=g.connection_id WHERE c.enabled AND g.account_id=$1 ORDER BY c.name",&[&id]).await?;
+    let rows=db.query("SELECT c.id,c.name,c.engine,c.environment FROM connections c JOIN connection_read_grants g ON c.id=g.connection_id WHERE c.deleted_at IS NULL AND c.enabled AND g.account_id=$1 ORDER BY c.name",&[&id]).await?;
     Ok(Json(json!(rows.iter().map(connection).collect::<Vec<_>>())))
 }
 fn connection(r: &tokio_postgres::Row) -> Value {
@@ -140,13 +140,13 @@ async fn overview(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
         .await?;
     let connections = db
         .query(
-            "SELECT id,name,engine,environment,enabled FROM connections ORDER BY name",
+            "SELECT id,name,engine,environment,enabled FROM connections WHERE deleted_at IS NULL ORDER BY name",
             &[],
         )
         .await?;
     let grants = db
         .query(
-            "SELECT account_id,connection_id FROM connection_read_grants ORDER BY 1,2",
+            "SELECT g.account_id,g.connection_id FROM connection_read_grants g JOIN connections c ON c.id=g.connection_id WHERE c.deleted_at IS NULL ORDER BY 1,2",
             &[],
         )
         .await?;
@@ -157,6 +157,9 @@ async fn overview(State(a): State<App>, h: HeaderMap) -> Result<Json<Value>> {
 #[derive(Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 enum Change {
+    DeleteConnection {
+        id: i64,
+    },
     EditConnection {
         id: i64,
         name: String,
@@ -248,6 +251,18 @@ async fn change(State(a): State<App>, h: HeaderMap, Json(v): Json<Change>) -> Re
             let row=tx.query_one("INSERT INTO accounts(name,password_hash) VALUES(trim($1),crypt($2,gen_salt('bf',12))) RETURNING id",&[&name,&password]).await?;
             ("account.create", row.get(0), None)
         }
+        Change::DeleteConnection { id } => {
+            let changed = tx.execute("UPDATE connections SET deleted_at=now(), enabled=false, encrypted_dsn=decode('','hex') WHERE id=$1 AND deleted_at IS NULL", &[&id]).await?;
+            if changed == 0 {
+                return Err(Error(StatusCode::NOT_FOUND));
+            }
+            tx.execute(
+                "DELETE FROM connection_read_grants WHERE connection_id=$1",
+                &[&id],
+            )
+            .await?;
+            ("connection.delete", id, Some(id))
+        }
         Change::EditConnection {
             id,
             name,
@@ -259,7 +274,7 @@ async fn change(State(a): State<App>, h: HeaderMap, Json(v): Json<Change>) -> Re
                 .execute(
                     "UPDATE connections SET name=trim($2), environment=$3, enabled=$4,
                  encrypted_dsn=CASE WHEN nullif($5::text,'') IS NULL THEN encrypted_dsn
-                 ELSE pgp_sym_encrypt($5,$6,'cipher-algo=aes256') END WHERE id=$1",
+                 ELSE pgp_sym_encrypt($5,$6,'cipher-algo=aes256') END WHERE id=$1 AND deleted_at IS NULL",
                     &[&id, &name, &environment, &enabled, &dsn, a.key.as_ref()],
                 )
                 .await?;
@@ -287,7 +302,7 @@ async fn change(State(a): State<App>, h: HeaderMap, Json(v): Json<Change>) -> Re
         } => {
             if allow {
                 tx.execute(
-                    "INSERT INTO connection_read_grants VALUES($1,$2) ON CONFLICT DO NOTHING",
+                    "INSERT INTO connection_read_grants SELECT $1,id FROM connections WHERE id=$2 AND deleted_at IS NULL FOR SHARE ON CONFLICT DO NOTHING",
                     &[&account, &connection],
                 )
                 .await?;
@@ -368,6 +383,8 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .await?;
     tx.batch_execute(include_str!("../migrations/003.sql"))
         .await?;
+    tx.batch_execute(include_str!("../migrations/004.sql"))
+        .await?;
     if !tx
         .query_one("SELECT EXISTS(SELECT 1 FROM accounts WHERE admin)", &[])
         .await?
@@ -387,6 +404,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/", get(page))
         .route("/admin", get(page))
         .route("/admin/login", get(page))
+        .route("/admin/connections/{id}", get(page))
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
         .route("/api/connections", get(catalog))

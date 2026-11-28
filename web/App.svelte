@@ -1,144 +1,275 @@
 <script>
+  import { onMount } from 'svelte';
+  import ResourceList from './ResourceList.svelte';
+  import Modal from './Modal.svelte';
+  import './admin.css';
 
-import {onMount} from 'svelte';
-import './admin.css';
-let dark=$state(false);
-let events=$state([]);
-let nextBefore=$state(null);
-let auditLoading=$state(false);
-let auditError=$state('');
-const auditLabels={
- 'account.create':'创建账号','account.enable':'恢复账号','account.disable':'停用账号',
- 'account.reset_password':'重置密码','connection.create':'登记连接','connection.edit':'修改连接',
- 'read.grant':'授予读取','read.revoke':'撤销读取','settings.session_hours':'修改会话时长',
- 'probe.start':'开始探测','probe.ok':'探测成功','probe.failed':'探测失败','probe.timeout':'探测超时'
-};
-async function loadAudit(append=false){
- if(auditLoading)return;
- auditLoading=true;
- auditError='';
- try{
-   const result=await api('/api/admin/audit'+(append?'?before='+nextBefore:''));
-   events=append?[...events,...result.events]:result.events;
-   nextBefore=result.next_before;
- }catch(error){
-   auditError=error.message;
- }finally{
-   auditLoading=false;
- }
-}
-function toggleTheme(){
- dark=!dark;
- document.documentElement.dataset.theme=dark?'dark':'light';
- localStorage.setItem('dbwong-theme',document.documentElement.dataset.theme);
-}
-const el=id=>document.getElementById(id);
-const admin=location.pathname.startsWith('/admin');
-const heading=admin?'管理后台':'我的工作台';
-let title=$state(heading);
-async function api(path,body){
- const options=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
- const response=await fetch(path,{...options,cache:'no-store'});
- if(!response.ok)throw Object.assign(new Error(({400:'请检查表单内容',401:'请使用有效账号和密码登录',403:'当前账号没有此权限',409:'名称已存在'})[response.status]||'服务暂不可用'),{status:response.status});
- return response.headers.get('content-type')?.includes('application/json')?response.json():null;
-}
-function list(id,values){el(id).replaceChildren(...values.map(text=>{const li=document.createElement('li');li.textContent=text;return li}))}
-function options(name,rows){el('grant').elements[name].replaceChildren(...rows.map(r=>new Option(r.name,r.id)))}
-async function refresh(){
- el('content').hidden=true;
- try{
- const data=await api(admin?'/api/admin':'/api/connections');
- const rows=admin?data.connections:data;
- list('connections',rows.length?rows.map(r=>r.name+' · '+r.engine+' · '+(r.environment==='production'?'生产':'测试')):['暂无连接']);
- if(admin){el('session_hours').elements.hours.value=data.session_hours;options('account',data.accounts);options('connection',rows);
- for(const id of ['reset_password','account_status']) {
-   const choices=data.accounts.filter(a=>!a.admin).map(a=>new Option(a.name+(a.enabled?'':'（已停用）'),a.id));
-   el(id).elements.account.replaceChildren(...choices)
- }
- const edit=el('edit_connection').elements;
- edit.target.replaceChildren(...rows.map(r=>new Option(r.name+(r.enabled?'':'（已停用）'),r.id)));
- function selectConnection(){
-   const row=rows.find(r=>r.id===Number(edit.target.value));
-   edit.name.value=row?.name??'';edit.dsn.value='';edit.environment.value=row?.environment??'test';
-   edit.enabled.value=row?.enabled?'yes':'no';
-   el('probe').disabled=!row?.enabled||row.engine!=='postgres';
- }
- edit.target.onchange=selectConnection;selectConnection();
- const names=new Map(data.accounts.map(r=>[r.id,r.name])), labels=new Map(rows.map(r=>[r.id,r.name]));
- list('grants',data.grants.map(([a,c])=>names.get(a)+' → '+labels.get(c)))}
- el('login').hidden=true;el('content').hidden=false;el('sidebar').hidden=!admin;el('dashboard').classList.toggle('dashboard',admin);
- if(!admin){el('connection').hidden=true;el('edit_connection').hidden=true}
- document.body.classList.remove('signin');document.body.classList.toggle('admin-active',admin);title=heading;el('logout').hidden=false;
- }catch(e){document.body.classList.remove('admin-active');document.body.classList.add('signin');title=admin?'管理后台登录':'登录工作台';el('login').hidden=false;el('logout').hidden=e.status===401;el('message').textContent=e.status===401?'':e.message}
-}
-async function submit(event){
- const form=event.currentTarget;
- event.preventDefault();const data=Object.fromEntries(new FormData(form));const signin=form.getAttribute('id')==='login';
- if(form.getAttribute('id')==='account_status'||form.getAttribute('id')==='reset_password')data.account=Number(data.account);
- if(form.getAttribute('id')==='account_status')data.enabled=data.enabled==='yes';
- if(form.getAttribute('id')==='edit_connection'){data.id=Number(data.target);delete data.target;data.enabled=data.enabled==='yes'}
- if(form.getAttribute('id')==='session_hours') data.hours=Number(data.hours);
- if(form.getAttribute('id')==='grant'){data.account=Number(data.account);data.connection=Number(data.connection);data.allow=data.allow==='yes'}
- try{await api(signin?'/api/login':'/api/admin',signin?data:{action:form.getAttribute('id'),...data});form.reset();el('message').textContent=signin?'':'已保存';await refresh()}catch(e){el('message').textContent=e.message}
-};
-async function probe(){
- const connection=Number(el('edit_connection').elements.target.value);
- try{const result=await api('/api/admin/probe',{connection});
- el('message').textContent=({'probe.ok':'已连接，查询成功','probe.failed':'连接或认证失败','probe.timeout':'连接测试超时'})[result.outcome]}
- catch(e){el('message').textContent=e.message}
-};
-async function logout(){try{await api('/api/logout',{});location.reload()}catch(e){el('message').textContent=e.message}};
-onMount(()=>{
- dark=localStorage.getItem('dbwong-theme')==='dark';
- document.documentElement.dataset.theme=dark?'dark':'light';
-title=heading;
-document.title=heading+' · dbwong';
-document.querySelector(admin?'header a[href="/admin"]':'header a[href="/"]').setAttribute('aria-current','page');
-const panels=[...document.querySelectorAll('[data-panel]')];
-const menu=[...document.querySelectorAll('[data-view]')];
-for(const button of menu) button.onclick=()=>{
- for(const item of menu) item.setAttribute('aria-pressed',String(item===button));
- for(const panel of panels) panel.hidden=panel.dataset.panel!==button.dataset.view;
- el('message').textContent='';
- if(button.dataset.view==='audit')void loadAudit();
-};
- refresh();
-});
+  const admin = location.pathname.startsWith('/admin');
+  const detailId = Number(location.pathname.match(/^\/admin\/connections\/(\d+)$/)?.[1]);
+  const menus = { connections: '数据库连接', accounts: '账号管理', access: '读取授权', settings: '会话设置', audit: '操作审计' };
+  const actions = {
+    connection: '新增连接', edit_connection: '编辑连接', delete_connection: '删除连接',
+    account: '新增账号', account_status: '修改账号状态', reset_password: '重置密码',
+    grant: '新增授权', revoke: '撤销授权', session_hours: '编辑会话设置'
+  };
+  const labels = {
+    'account.create':'创建账号','account.enable':'恢复账号','account.disable':'停用账号',
+    'account.reset_password':'重置密码','connection.create':'登记连接','connection.edit':'修改连接',
+    'connection.delete':'删除连接','read.grant':'授予读取','read.revoke':'撤销读取',
+    'settings.session_hours':'修改会话时长','probe.start':'开始探测','probe.ok':'探测成功',
+    'probe.failed':'探测失败','probe.timeout':'探测超时'
+  };
+  const dateFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle:'medium', timeStyle:'medium' });
+  let view = $state('connections');
+  let query = $state('');
+  let data = $state(null);
+  let dark = $state(false);
+  let ready = $state(false);
+  let message = $state('');
+  let modalError = $state('');
+  let modal = $state(null);
+  let busy = $state(false);
+  let now = $state(new Date());
+  let events = $state([]);
+  let nextBefore = $state(null);
+  let auditLoading = $state(false);
+  let auditError = $state('');
+  const environment = (value) => value === 'production' ? '生产' : '测试';
+  const status = (enabled) => enabled ? '启用' : '停用';
+  const rows = (items, term) => items.filter(row => row.cells.some(cell => String(cell).toLowerCase().includes(term.trim().toLowerCase())));
+  const connectionRows = $derived((data?.connections ?? []).map(row => ({
+    ...row, cells: [row.name, row.engine, environment(row.environment), ...(admin ? [status(row.enabled)] : [])]
+  })));
+  const selected = $derived(connectionRows.find(row => row.id === detailId));
+  const accountRows = $derived((data?.accounts ?? []).map(row => ({
+    ...row, cells:[row.name, row.admin ? '管理员' : 'DBA', status(row.enabled)]
+  })));
+  const grantRows = $derived((data?.grants ?? []).map(([account, connection]) => ({
+    account, connection, cells:[accountRows.find(row => row.id === account)?.name ?? account,
+      connectionRows.find(row => row.id === connection)?.name ?? connection]
+  })));
+
+  async function api(path, body) {
+    const response = await fetch(path, body === undefined ? {cache:'no-store'} : {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const error = new Error(({400:'请检查表单内容',401:'请使用有效账号和密码登录',403:'当前账号没有此权限',404:'记录已不存在',409:'名称已存在或记录状态不可用'})[response.status] ?? '服务暂不可用');
+      error.status = response.status;
+      throw error;
+    }
+    return response.headers.get('content-type')?.includes('application/json') ? response.json() : null;
+  }
+  async function refresh() {
+    const result = await api(admin ? '/api/admin' : '/api/connections');
+    data = admin ? result : {connections: result};
+  }
+  async function loadAudit(append = false) {
+    if (auditLoading) return;
+    auditLoading = true;
+    auditError = '';
+    try {
+      const page = await api('/api/admin/audit' + (append ? '?before=' + nextBefore : ''));
+      events = append ? [...events, ...page.events] : page.events;
+      nextBefore = page.next_before;
+    } catch (error) { auditError = error.message; }
+    finally { auditLoading = false; }
+  }
+  function navigate(next) {
+    if (detailId) { location.assign('/admin#' + next); return; }
+    view = next;
+    query = '';
+    message = '';
+    history.replaceState(null, '', '/admin#' + next);
+    if (next === 'audit') void loadAudit();
+  }
+  function toggleTheme() {
+    dark = !dark;
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    localStorage.setItem('dbwong-theme', document.documentElement.dataset.theme);
+  }
+  function open(action, row = null) { modalError = ''; modal = {action, row}; }
+  function close() { if (!busy) modal = null; }
+  async function login(event) {
+    event.preventDefault();
+    busy = true;
+    try {
+      await api('/api/login', Object.fromEntries(new FormData(event.currentTarget)));
+      await refresh();
+      message = '';
+      if (view === 'audit') void loadAudit();
+    } catch (error) { message = error.message; }
+    finally { busy = false; }
+  }
+  async function save(event) {
+    event.preventDefault();
+    if (busy) return;
+    busy = true;
+    modalError = '';
+    const fields = Object.fromEntries(new FormData(event.currentTarget));
+    const {action, row} = modal;
+    const payload = { ...fields, action: action === 'revoke' ? 'grant' : action };
+    if (action === 'edit_connection' || action === 'delete_connection') payload.id = row.id;
+    if (action === 'edit_connection') payload.enabled = fields.enabled === 'yes';
+    if (action === 'account_status' || action === 'reset_password') payload.account = row.id;
+    if (action === 'account_status') payload.enabled = !row.enabled;
+    if (action === 'grant' || action === 'revoke') {
+      payload.account = Number(row?.account ?? fields.account);
+      payload.connection = Number(row?.connection ?? fields.connection);
+      payload.allow = action === 'grant';
+    }
+    if (action === 'session_hours') payload.hours = Number(fields.hours);
+    try {
+      await api('/api/admin', payload);
+      modal = null;
+      message = '操作已保存';
+      await refresh();
+    } catch (error) {
+      if (modal) modalError = error.message;
+      else message = '已保存，刷新列表失败。请重新加载页面。';
+    } finally { busy = false; }
+  }
+  async function probe(row) {
+    busy = true;
+    try {
+      const result = await api('/api/admin/probe', {connection:row.id});
+      message = ({'probe.ok':'已连接，查询成功','probe.failed':'连接或认证失败','probe.timeout':'连接测试超时'})[result.outcome];
+    } catch (error) { message = error.message; }
+    finally { busy = false; }
+  }
+  async function logout() {
+    try { await api('/api/logout', {}); location.reload(); }
+    catch (error) { message = error.message; }
+  }
+  onMount(() => {
+    dark = localStorage.getItem('dbwong-theme') === 'dark';
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    const hash = location.hash.slice(1);
+    if (Object.hasOwn(menus, hash)) view = hash;
+    refresh().then(() => { if (admin && view === 'audit') void loadAudit(); })
+      .catch(error => { if (error.status !== 401) message = error.message; })
+      .finally(() => { ready = true; });
+    const timer = setInterval(() => { now = new Date(); }, 1000);
+    return () => clearInterval(timer);
+  });
 </script>
-<header><strong><span class="mark" aria-hidden="true">D</span>dbwong</strong><a href="/">工作台</a><a href="/admin">管理后台</a><button type="button" onclick={toggleTheme}>{dark ? "浅色" : "深色"}</button><button id="logout" onclick={logout} hidden>退出</button></header>
-<main><h1>{title}</h1><p id="message" role="status"></p>
-<form onsubmit={submit} id="login" hidden><h2>登录账号</h2><label>账号<input name="name" required autocomplete="username"></label><label>密码<input name="password" type="password" required autocomplete="current-password"></label><button>登录</button></form>
-<div id="content" hidden><div id="dashboard">
-<aside id="sidebar" hidden><nav aria-label="后台菜单">
-<button type="button" data-view="connections" aria-pressed="true"><svg viewBox="0 0 16 16" aria-hidden="true"><ellipse cx="8" cy="3.5" rx="5" ry="2"/><path d="M3 3.5v9c0 2.6 10 2.6 10 0v-9M3 8c0 2.6 10 2.6 10 0"/></svg>数据库连接</button>
-<button type="button" data-view="accounts" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="5" r="2.5"/><path d="M3 14v-1a5 5 0 0 1 10 0v1"/></svg>账号管理</button>
-<button type="button" data-view="access" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5 14 4v4c0 3-3 5.5-6 7-3-1.5-6-4-6-7V4zM5.5 8l1.6 1.6 3.4-3.4"/></svg>读取授权</button>
-<button type="button" data-view="settings" aria-pressed="false"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 4.5V8l2.5 1.5"/></svg>会话设置</button>
-<button type="button" data-view="audit" aria-pressed="false">操作审计</button>
-</nav></aside>
-<div id="workspace"><div data-panel="connections"><section><h2>数据库连接</h2><ul id="connections"></ul></section>
-<form onsubmit={submit} id="connection"><h2>登记连接</h2><label>名称<input name="name" required></label><label>引擎<select name="engine"><option>mysql</option><option>postgres</option><option>mssql</option><option>mongo</option><option>redis</option></select></label><label>环境<select name="environment"><option value="test">测试</option><option value="production">生产</option></select></label><label>连接串<input name="dsn" type="password" required autocomplete="off"></label><button>保存</button></form>
-<form onsubmit={submit} id="edit_connection"><h2>维护已登记连接</h2><label>连接<select name="target" required></select></label><label>名称<input name="name" required></label><label>环境<select name="environment"><option value="test">测试</option><option value="production">生产</option></select></label><label>状态<select name="enabled"><option value="yes">启用</option><option value="no">停用</option></select></label><label>新连接串（留空沿用）<input name="dsn" type="password" autocomplete="off"></label><button>保存修改</button><button type="button" id="probe" onclick={probe}>测试已保存的 PostgreSQL 连接</button></form>
-</div><div data-panel="accounts" hidden><form onsubmit={submit} id="account"><h2>创建 DBA 账号</h2><label>账号<input name="name" required></label><label>密码（12–72 字节）<input name="password" type="password" required autocomplete="new-password"></label><button>创建</button></form>
-<form onsubmit={submit} id="account_status"><h2>账号状态</h2><label>DBA 账号<select name="account" required></select></label><label>操作<select name="enabled"><option value="no">停用并结束会话</option><option value="yes">恢复登录</option></select></label><button>应用</button></form>
-<form onsubmit={submit} id="reset_password"><h2>重置 DBA 密码</h2><label>DBA 账号<select name="account" required></select></label><label>新密码（12–72 字节）<input name="password" type="password" autocomplete="new-password" required></label><button>重置并结束会话</button></form>
-</div><div data-panel="settings" hidden><form onsubmit={submit} id="session_hours"><h2>会话设置</h2><label>新登录会话有效期（小时）<input name="hours" type="number" min="1" max="168" required></label><button>保存</button></form></div><div data-panel="access" hidden><form onsubmit={submit} id="grant"><h2>读取授权</h2><label>账号<select name="account" required></select></label><label>连接<select name="connection" required></select></label><label>操作<select name="allow"><option value="yes">授予读取</option><option value="no">撤销读取</option></select></label><button>应用</button><ul id="grants"></ul></form></div>
-<div data-panel="audit" hidden>
- <section>
-  <div class="panel-heading"><h2>操作审计</h2><button type="button" disabled={auditLoading} onclick={() => loadAudit()}>刷新</button></div>
+
+<svelte:head><title>{admin ? '管理后台' : '工作台'} · dbwong</title></svelte:head>
+<header>
+  <strong><span class="mark" aria-hidden="true">D</span>dbwong</strong>
+  <a href="/" aria-current={!admin ? 'page' : undefined}>工作台</a>
+  <a href="/admin" aria-current={admin ? 'page' : undefined}>管理后台</a>
+  <button type="button" onclick={toggleTheme}>{dark ? '浅色' : '深色'}</button>
+  {#if data}<button type="button" onclick={logout}>退出</button>{/if}
+</header>
+
+<div class="app-shell" class:admin-active={admin && !!data} class:signin={ready && !data}>
+  {#if admin && data}
+    <aside><nav aria-label="后台菜单">
+      {#each Object.entries(menus) as [key, name]}
+        <button type="button" aria-pressed={view === key} onclick={() => navigate(key)}>{name}</button>
+      {/each}
+    </nav></aside>
+  {/if}
+  <main>
+    <h1>{!ready ? '正在加载…' : !data ? (admin ? '管理后台登录' : '登录工作台') : !admin ? '我的工作台' : detailId ? '连接详情' : menus[view]}</h1>
+    {#if message}<p id="message" role="status">{message}</p>{/if}
+    {#if ready && !data}
+      <form id="login" onsubmit={login}>
+        <label>账号<input name="name" required autocomplete="username"></label>
+        <label>密码<input name="password" type="password" required autocomplete="current-password"></label>
+        <button disabled={busy}>登录</button>
+      </form>
+    {:else if data}
+      <div id="content">
+        {#if detailId}
+          <a class="secondary" href="/admin#connections">返回连接列表</a>
+          {#if selected}
+            <section class="detail">
+              <div class="panel-heading"><h2>{selected.name}</h2><button onclick={() => open('edit_connection', selected)}>编辑</button></div>
+              <dl><dt>编号</dt><dd>{selected.id}</dd><dt>引擎</dt><dd>{selected.engine}</dd><dt>环境</dt><dd>{environment(selected.environment)}</dd><dt>状态</dt><dd>{status(selected.enabled)}</dd></dl>
+              {#if selected.engine === 'postgres'}
+                <button class="secondary" disabled={!selected.enabled || busy} onclick={() => probe(selected)}>测试连接</button>
+              {/if}
+            </section>
+          {:else}<section class="detail">此连接不存在或已删除。</section>{/if}
+        {:else if view === 'connections' || !admin}
+          <ResourceList title="数据库连接" bind:query rows={rows(connectionRows, query)} columns={admin ? ['名称','引擎','环境','状态'] : ['名称','引擎','环境']}
+            actions={admin ? connectionActions : undefined} create={admin ? () => open('connection') : undefined} />
+        {:else if view === 'accounts'}
+          <ResourceList title="账号" bind:query rows={rows(accountRows, query)} columns={['账号','角色','状态']} actions={accountActions} create={() => open('account')} />
+        {:else if view === 'access'}
+          <ResourceList title="授权" bind:query rows={rows(grantRows, query)} columns={['账号','连接']} actions={grantActions} create={() => open('grant')} />
+        {:else if view === 'settings'}
+          <ResourceList title="会话设置" bind:query rows={rows([{cells:['新登录会话有效期', data.session_hours + ' 小时']}], query)} columns={['设置项','当前值']} actions={settingsActions} />
+        {:else if view === 'audit'}
+          <ResourceList title="已加载审计记录" bind:query
+            rows={rows(events.map(event => ({cells:[dateFormat.format(new Date(event.occurred_at)), event.actor, labels[event.action] ?? event.action, event.subject, event.connection ?? '—']})), query)}
+            columns={['时间','操作人','操作','对象编号','连接']} extra={auditNotice} more={auditControls} empty={auditLoading ? '正在加载…' : '暂无匹配记录'} />
+        {/if}
+      </div>
+    {/if}
+  </main>
+  <footer><span>Copyright © wangcw {now.getFullYear()} · dbwong</span><time datetime={now.toISOString()}>{dateFormat.format(now)}</time></footer>
+</div>
+
+{#snippet connectionActions(row)}
+  <a class="secondary" href={'/admin/connections/' + row.id}>详情</a>
+  <button class="secondary" onclick={() => open('edit_connection', row)}>编辑</button>
+  <button class="secondary destructive" onclick={() => open('delete_connection', row)}>删除</button>
+{/snippet}
+{#snippet accountActions(row)}
+  {#if !row.admin}
+    <button class="secondary" onclick={() => open('account_status', row)}>{row.enabled ? '停用' : '恢复'}</button>
+    <button class="secondary" onclick={() => open('reset_password', row)}>重置密码</button>
+  {/if}
+{/snippet}
+{#snippet grantActions(row)}
+  <button class="secondary destructive" onclick={() => open('revoke', row)}>撤销</button>
+{/snippet}
+{#snippet settingsActions(_row)}
+  <button class="secondary" onclick={() => open('session_hours')}>编辑</button>
+{/snippet}
+{#snippet auditNotice()}
   {#if auditError}<p role="alert">{auditError}</p>{/if}
-  {#if events.length}
-    <div class="table-scroll">
-     <table aria-label="管理操作记录">
-      <thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>对象编号</th><th>连接</th></tr></thead>
-      <tbody>
-       {#each events as event (event.id)}
-        <tr><td>{new Date(event.occurred_at).toLocaleString()}</td><td>{event.actor}</td><td>{auditLabels[event.action] ?? event.action}</td><td>{event.subject}</td><td>{event.connection ?? '—'}</td></tr>
-       {/each}
-      </tbody>
-     </table>
-    </div>
-    {#if nextBefore}<button type="button" disabled={auditLoading} onclick={() => loadAudit(true)}>加载更多</button>{/if}
-  {:else if !auditError}<p>{auditLoading ? '正在加载…' : '暂无操作记录'}</p>{/if}
- </section>
-</div></div></div></div></main>
+{/snippet}
+{#snippet auditControls()}
+  <div class="row-actions">
+    <button class="secondary" disabled={auditLoading} onclick={() => loadAudit()}>刷新</button>
+    {#if nextBefore}<button class="secondary" disabled={auditLoading} onclick={() => loadAudit(true)}>加载更多</button>{/if}
+  </div>
+{/snippet}
+
+{#if modal}
+  <Modal title={actions[modal.action]} {close}>
+    <form onsubmit={save} autocomplete="off">
+      {#if modal.action === 'connection' || modal.action === 'edit_connection'}
+        <label>名称<input name="name" required maxlength="100" value={modal.row?.name ?? ''}></label>
+        {#if modal.action === 'connection'}
+          <label>引擎<select name="engine">{#each ['mysql','postgres','mssql','mongo','redis'] as engine}<option>{engine}</option>{/each}</select></label>
+        {/if}
+        <label>环境<select name="environment" value={modal.row?.environment ?? 'test'}><option value="test">测试</option><option value="production">生产</option></select></label>
+        {#if modal.action === 'edit_connection'}
+          <label>状态<select name="enabled" value={modal.row.enabled ? 'yes' : 'no'}><option value="yes">启用</option><option value="no">停用</option></select></label>
+        {/if}
+        <label>{modal.action === 'connection' ? '连接串' : '新连接串（留空沿用）'}<input name="dsn" type="password" required={modal.action === 'connection'} autocomplete="new-password"></label>
+      {:else if modal.action === 'account' || modal.action === 'reset_password'}
+        {#if modal.action === 'account'}<label>账号<input name="name" required maxlength="100"></label>{:else}<p>重置 {modal.row.name} 的密码会结束该账号的现有会话。</p>{/if}
+        <label>新密码（12–72 字节）<input name="password" type="password" required autocomplete="new-password"></label>
+      {:else if modal.action === 'grant'}
+        <label>账号<select name="account" required><option value="">选择账号</option>{#each accountRows as row}<option value={row.id}>{row.name}</option>{/each}</select></label>
+        <label>连接<select name="connection" required><option value="">选择连接</option>{#each connectionRows as row}<option value={row.id}>{row.name}</option>{/each}</select></label>
+      {:else if modal.action === 'session_hours'}
+        <label>新登录会话有效期（小时）<input name="hours" type="number" min="1" max="168" value={data.session_hours} required></label>
+      {:else if modal.action === 'delete_connection'}
+        <p>删除「{modal.row.name}」将清除保存的凭据并撤销现有授权，审计记录继续保留。</p>
+      {:else if modal.action === 'revoke'}
+        <p>确认撤销「{modal.row.cells[0]}」对「{modal.row.cells[1]}」的读取授权？</p>
+      {:else if modal.action === 'account_status'}
+        <p>{modal.row.enabled ? '停用并结束当前会话' : '恢复登录'}：{modal.row.name}</p>
+      {/if}
+      {#if modalError}<p role="alert">{modalError}</p>{/if}
+      <div class="row-actions"><button class="secondary" type="button" disabled={busy} onclick={close}>取消</button><button disabled={busy}>{modal.action === 'delete_connection' ? '确认删除' : '确认'}</button></div>
+    </form>
+  </Modal>
+{/if}

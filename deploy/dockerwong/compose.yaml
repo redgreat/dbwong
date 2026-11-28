@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/redgreat/dbwong:v0.1.2
+    image: ghcr.io/redgreat/dbwong:v0.1.3
     environment:
       DBW_CONFIG: /etc/dbwong/config.json
     volumes:
