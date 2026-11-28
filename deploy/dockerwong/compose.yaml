@@ -1,0 +1,16 @@
+services:
+  app:
+    image: ghcr.io/redgreat/dbwong:v0.1.0
+    environment:
+      DBW_CONFIG: /etc/dbwong/config.json
+    volumes:
+      - ./config/local.json:/etc/dbwong/config.json:ro
+    networks:
+      proxy:
+        aliases:
+          - dbwong-admin
+    restart: unless-stopped
+networks:
+  proxy:
+    external: true
+    name: caddy_default

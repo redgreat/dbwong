@@ -45,3 +45,7 @@ Windows 锁定依赖构建、格式检查通过。独立 PostgreSQL 17.7 上完�
 
 发布验收采用 GitHub Release 触发 Actions 构建 GHCR 镜像，再在 dockerwong 上拉取指定版本，通过 Caddy 代理验证。跳过本地 Compose 联调。
 
+
+### 2026-11-28 首次远端部署
+
+GitHub Release v0.1.0 触发 Actions 运行 46025566782，将镜像发布到 GHCR。dockerwong 在 /root/dbwong 拉取并启动，运行镜像摘要为 sha256:d088f8a9df6d990dd9b10e853a7c360609f8219305f81a6917e0508c430d267f，与发布记录一致。Caddy 通过容器网络转发。已从公网验证 HTTPS 管理页、匿名访问拒绝、管理员登录、读取后台及登出后会话失效。本次为 M1 管理端试点部署；M5 的业务库和恢复演练仍待开展。
