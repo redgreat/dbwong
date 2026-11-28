@@ -29,3 +29,5 @@ Admin 在线维护 DBA 账号、业务库连接、读取授权及新会话有效
 ## dockerwong 发布
 
 发布 GitHub Release 后，Publish release image 工作流构建带 Release 标签的 GHCR 镜像。远端使用 deploy/dockerwong/compose.yaml，部署目录 /root/dbwong。配置文件位置为该目录下的 config/local.json，容器 UID 65534 需要读取权限。该实例接入 caddy_default 网络，Caddy 将 dbwong.wongcw.cn 转发到 dbwong-admin:8080。更新时同步目标镜像标签，依次执行 docker compose pull 与 docker compose up -d，再检查管理页及授权接口。
+
+前端使用 Svelte 和 Vite。原生启动前执行 npm --prefix web ci 与 npm --prefix web run build，再执行 cargo run --locked。镜像构建时自动编译前端，由 Rust 同源提供页面。

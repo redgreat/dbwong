@@ -2,3 +2,5 @@ target
 .git
 .env
 config/local.json
+web/node_modules
+web/dist

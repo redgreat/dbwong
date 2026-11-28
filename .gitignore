@@ -24,3 +24,5 @@ rustc-ice-*.txt
 #.idea/
 .env
 /config/local.json
+/web/node_modules/
+/web/dist/

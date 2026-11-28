@@ -1,3 +1,4 @@
+mod audit;
 mod probe;
 use axum::{
     Json, Router,
@@ -313,7 +314,7 @@ async fn change(State(a): State<App>, h: HeaderMap, Json(v): Json<Change>) -> Re
     Ok(StatusCode::NO_CONTENT)
 }
 async fn page() -> Html<&'static str> {
-    Html(include_str!("../web/index.html"))
+    Html(include_str!("../web/dist/index.html"))
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -389,6 +390,7 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
         .route("/api/connections", get(catalog))
+        .route("/api/admin/audit", get(audit::list))
         .route("/api/admin/probe", post(probe::probe))
         .route("/api/admin", get(overview).post(change))
         .with_state(App {

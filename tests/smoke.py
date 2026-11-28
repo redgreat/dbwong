@@ -93,3 +93,17 @@ call(dba, "/api/connections", expected=401)
 print("PASS: login, admin isolation, origin validation, grant, revoke, disable, restore, password reset, logout")
 
 
+
+call(dba, "/api/admin/audit", expected=401)
+call(dba, "/api/login", {**account, "password": new_password})
+call(dba, "/api/admin/audit", expected=403)
+call(admin, "/api/admin/audit?before=0", expected=400)
+for _ in range(25):
+    call(admin, "/api/admin", {"action": "session_hours", "hours": 8}, 204)
+first_page = call(admin, "/api/admin/audit")
+assert len(first_page["events"]) == 25
+second_page = call(admin, f"/api/admin/audit?before={first_page['next_before']}")
+assert all(event["id"] < first_page["next_before"] for event in second_page["events"])
+assert any(event["action"] == "account.reset_password" for event in second_page["events"])
+assert password not in json.dumps(second_page)
+print("PASS: audit authorization, pagination, and credential exclusion")

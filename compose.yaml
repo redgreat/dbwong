@@ -1,6 +1,6 @@
 services:
   app:
-    image: ghcr.io/redgreat/dbwong:v0.1.0
+    image: ghcr.io/redgreat/dbwong:v0.1.2
     volumes:
       - ./config/local.json:/etc/dbwong/config.json:ro
     environment:
@@ -8,4 +8,3 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
-
